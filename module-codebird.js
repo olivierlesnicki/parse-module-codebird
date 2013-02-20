@@ -8,7 +8,7 @@
  * Requires module-sha1.js
  */
 
-var sha1 = require("module-sha1");
+var sha1 = require("cloud/module-sha1");
 
 /**
  * A simple wrapper for the Twitter API
