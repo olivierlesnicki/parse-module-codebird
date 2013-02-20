@@ -9,7 +9,7 @@ Installation
 
 - Place `module-codebird.js` and `module-sha1.js` in your cloud folder.
 - In `main.js`, add the following line:
-- 
+
 ```javascript
 var Codebird = require('cloud/module-codebird');
 var codebird = new Codebird();
