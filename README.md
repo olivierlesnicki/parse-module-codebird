@@ -1,4 +1,4 @@
-parse-module-codebird
-=====================
+Codebird.js Parse.com Cloud Code module
+=======================================
 
-Codebird.js ported as a Parse Cloud Code module
+[Codebird.js](https://github.com/mynetx/codebird-js) is a Twitter javascript library developed by Github user [mynetx](https://github.com/mynetx).
