@@ -5,10 +5,8 @@
  * @author      Olivier Lesnicki
  * @copyright   2013 Olivier Lesnicki
  * 
- * Requires module-sha1.js
  */
 
-var sha1 = require("cloud/module-sha1");
 
 /**
  * A simple wrapper for the Twitter API
@@ -31,12 +29,6 @@ var sha1 = require("cloud/module-sha1");
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
  
-/**
- * Define constants
- */
-var IMAGETYPE_GIF = 1,
-    IMAGETYPE_JPEG = 2,
-    IMAGETYPE_PNG = 3;
 
 /**
  * A simple wrapper for the Twitter API
@@ -44,7 +36,9 @@ var IMAGETYPE_GIF = 1,
  * @package codebird
  * @subpackage codebird-js
  */
+
 var Codebird = function () {
+/* jshint +W098 */
 
     /**
      * The OAuth consumer key of your registered app
@@ -57,19 +51,63 @@ var Codebird = function () {
     var _oauth_consumer_secret = null;
 
     /**
+     * The app-only bearer token. Used to authorize app-only requests
+     */
+    var _oauth_bearer_token = null;
+
+    /**
+     * The API endpoint base to use
+     */
+    var _endpoint_base = "https://api.twitter.com/";
+
+    /**
+     * The media API endpoint base to use
+     */
+    var _endpoint_base_media = "https://upload.twitter.com/";
+
+    /**
      * The API endpoint to use
      */
-    var _endpoint = 'https://api.twitter.com/1.1/';
+    var _endpoint = _endpoint_base + "1.1/";
 
     /**
-     * The API endpoint to use for OAuth requests
+     * The media API endpoint to use
      */
-    var _endpoint_oauth = 'https://api.twitter.com/';
+    var _endpoint_media = _endpoint_base_media + "1.1/";
 
     /**
-     * The API endpoint to use for untransitioned methods
+     * The API endpoint base to use
      */
-    var _endpoint_old = 'https://api.twitter.com/1/';
+    var _endpoint_oauth = _endpoint_base;
+
+    /**
+     * API proxy endpoint
+     */
+    var _endpoint_proxy = "https://api.jublo.net/codebird/";
+
+    /**
+     * The API endpoint to use for old requests
+     */
+    var _endpoint_old = _endpoint_base + "1/";
+
+    /**
+     * Use JSONP for GET requests in IE7-9
+     */
+    var _use_jsonp = (typeof navigator !== "undefined"
+        && typeof navigator.userAgent !== "undefined"
+        && (navigator.userAgent.indexOf("Trident/4") > -1
+            || navigator.userAgent.indexOf("Trident/5") > -1
+            || navigator.userAgent.indexOf("MSIE 7.0") > -1
+        )
+    );
+
+    /**
+     * Whether to access the API via a proxy that is allowed by CORS
+     * Assume that CORS is only necessary in browsers
+     */
+    var _use_proxy = (typeof navigator !== "undefined"
+        && typeof navigator.userAgent !== "undefined"
+    );
 
     /**
      * The Request or access token. Used to sign requests
@@ -82,22 +120,9 @@ var Codebird = function () {
     var _oauth_token_secret = null;
 
     /**
-     * The cache to use for the public timeline
-     */
-    var _statuses_public_timeline_cache = {
-        timestamp: false,
-        data: false
-    };
-
-    /**
-     * The file formats that Twitter accepts as image uploads
-     */
-    var _supported_media_files = [IMAGETYPE_GIF, IMAGETYPE_JPEG, IMAGETYPE_PNG];
-
-    /**
      * The current Codebird version
      */
-    var _version = '2.2.3';
+    var _version = "2.6.0-dev";
 
     /**
      * Sets the OAuth consumer key and secret (App key)
@@ -110,6 +135,17 @@ var Codebird = function () {
     var setConsumerKey = function (key, secret) {
         _oauth_consumer_key = key;
         _oauth_consumer_secret = secret;
+    };
+
+    /**
+     * Sets the OAuth2 app-only auth bearer token
+     *
+     * @param string token OAuth2 bearer token
+     *
+     * @return void
+     */
+    var setBearerToken = function (token) {
+        _oauth_bearer_token = token;
     };
 
     /**
@@ -135,69 +171,92 @@ var Codebird = function () {
     };
 
     /**
+     * Enables or disables CORS proxy
+     *
+     * @param bool use_proxy Whether to use CORS proxy or not
+     *
+     * @return void
+     */
+    var setUseProxy = function (use_proxy) {
+        _use_proxy = !! use_proxy;
+    };
+
+    /**
+     * Sets custom CORS proxy server
+     *
+     * @param string proxy Address of proxy server to use
+     *
+     * @return void
+     */
+    var setProxy = function (proxy) {
+        // add trailing slash if missing
+        if (! proxy.match(/\/$/)) {
+            proxy += "/";
+        }
+        _endpoint_proxy = proxy;
+    };
+
+    /**
      * Parse URL-style parameters into object
+     *
+     * version: 1109.2015
+     * discuss at: http://phpjs.org/functions/parse_str
+     * +   original by: Cagri Ekin
+     * +   improved by: Michael White (http://getsprink.com)
+     * +    tweaked by: Jack
+     * +   bugfixed by: Onno Marsman
+     * +   reimplemented by: stag019
+     * +   bugfixed by: Brett Zamir (http://brett-zamir.me)
+     * +   bugfixed by: stag019
+     * -    depends on: urldecode
+     * +   input by: Dreamer
+     * +   bugfixed by: Brett Zamir (http://brett-zamir.me)
+     * %        note 1: When no argument is specified, will put variables in global scope.
      *
      * @param string str String to parse
      * @param array array to load data into
      *
      * @return object
      */
-    function parse_str(str, array) {
-        // Parses GET/POST/COOKIE data and sets global variables  
-        // 
-        // version: 1109.2015
-        // discuss at: http://phpjs.org/functions/parse_str    // +   original by: Cagri Ekin
-        // +   improved by: Michael White (http://getsprink.com)
-        // +    tweaked by: Jack
-        // +   bugfixed by: Onno Marsman
-        // +   reimplemented by: stag019    // +   bugfixed by: Brett Zamir (http://brett-zamir.me)
-        // +   bugfixed by: stag019
-        // -    depends on: urldecode
-        // +   input by: Dreamer
-        // +   bugfixed by: Brett Zamir (http://brett-zamir.me)    // %        note 1: When no argument is specified, will put variables in global scope.
-        // *     example 1: var arr = {};
-        // *     example 1: parse_str('first=foo&second=bar', arr);
-        // *     results 1: arr == { first: 'foo', second: 'bar' }
-        // *     example 2: var arr = {};    // *     example 2: parse_str('str_a=Jack+and+Jill+didn%27t+see+the+well.', arr);
-        // *     results 2: arr == { str_a: "Jack and Jill didn't see the well." }
-        var glue1 = '=',
-            glue2 = '&',
-            array2 = String(str).replace(/^&?([\s\S]*?)&?$/, '$1').split(glue2),
-            i, j, chr, tmp, key, value, bracket, keys, evalStr, that = this,
+    var _parse_str = function (str, array) {
+        var glue1 = "=",
+            glue2 = "&",
+            array2 = String(str).replace(/^&?([\s\S]*?)&?$/, "$1").split(glue2),
+            i, j, chr, tmp, key, value, bracket, keys, evalStr,
             fixStr = function (str) {
-                return that.urldecode(str).replace(/([\\"'])/g, '\\$1').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+                return decodeURIComponent(str).replace(/([\\"'])/g, "\\$1").replace(/\n/g, "\\n").replace(/\r/g, "\\r");
             };
-        if (!array) {
+        if (! array) {
             array = this.window;
         }
 
         for (i = 0; i < array2.length; i++) {
             tmp = array2[i].split(glue1);
             if (tmp.length < 2) {
-                tmp = [tmp, ''];
+                tmp = [tmp, ""];
             }
             key = fixStr(tmp[0]);
             value = fixStr(tmp[1]);
-            while (key.charAt(0) === ' ') {
+            while (key.charAt(0) === " ") {
                 key = key.substr(1);
             }
-            if (key.indexOf('\0') !== -1) {
-                key = key.substr(0, key.indexOf('\0'));
+            if (key.indexOf("\0") !== -1) {
+                key = key.substr(0, key.indexOf("\0"));
             }
-            if (key && key.charAt(0) !== '[') {
+            if (key && key.charAt(0) !== "[") {
                 keys = [];
                 bracket = 0;
                 for (j = 0; j < key.length; j++) {
-                    if (key.charAt(j) === '[' && !bracket) {
+                    if (key.charAt(j) === "[" && !bracket) {
                         bracket = j + 1;
-                    } else if (key.charAt(j) === ']') {
+                    } else if (key.charAt(j) === "]") {
                         if (bracket) {
                             if (!keys.length) {
                                 keys.push(key.substr(0, bracket - 1));
                             }
                             keys.push(key.substr(bracket, j - bracket));
                             bracket = 0;
-                            if (key.charAt(j + 1) !== '[') {
+                            if (key.charAt(j + 1) !== "[") {
                                 break;
                             }
                         }
@@ -208,94 +267,269 @@ var Codebird = function () {
                 }
                 for (j = 0; j < keys[0].length; j++) {
                     chr = keys[0].charAt(j);
-                    if (chr === ' ' || chr === '.' || chr === '[') {
-                        keys[0] = keys[0].substr(0, j) + '_' + keys[0].substr(j + 1);
+                    if (chr === " " || chr === "." || chr === "[") {
+                        keys[0] = keys[0].substr(0, j) + "_" + keys[0].substr(j + 1);
                     }
-                    if (chr === '[') {
+                    if (chr === "[") {
                         break;
                     }
                 }
-                evalStr = 'array';
+                /* jshint -W061 */
+                evalStr = "array";
                 for (j = 0; j < keys.length; j++) {
                     key = keys[j];
-                    if ((key !== '' && key !== ' ') || j === 0) {
+                    if ((key !== "" && key !== " ") || j === 0) {
                         key = "'" + key + "'";
                     } else {
-                        key = eval(evalStr + '.push([]);') - 1;
+                        key = eval(evalStr + ".push([]);") - 1;
                     }
-                    evalStr += '[' + key + ']';
-                    if (j !== keys.length - 1 && eval('typeof ' + evalStr) === 'undefined') {
-                        eval(evalStr + ' = [];');
+                    evalStr += "[" + key + "]";
+                    if (j !== keys.length - 1 && eval("typeof " + evalStr) === "undefined") {
+                        eval(evalStr + " = [];");
                     }
                 }
                 evalStr += " = '" + value + "';\n";
                 eval(evalStr);
+                /* jshint +W061 */
             }
         }
-    }
+    };
+
+    /**
+     * Get allowed API methods, sorted by GET or POST
+     * Watch out for multiple-method "account/settings"!
+     *
+     * @return array $apimethods
+     */
+    var getApiMethods = function () {
+        var httpmethods = {
+            GET: [
+                "account/settings",
+                "account/verify_credentials",
+                "application/rate_limit_status",
+                "blocks/ids",
+                "blocks/list",
+                "direct_messages",
+                "direct_messages/sent",
+                "direct_messages/show",
+                "favorites/list",
+                "followers/ids",
+                "followers/list",
+                "friends/ids",
+                "friends/list",
+                "friendships/incoming",
+                "friendships/lookup",
+                "friendships/lookup",
+                "friendships/no_retweets/ids",
+                "friendships/outgoing",
+                "friendships/show",
+                "geo/id/:place_id",
+                "geo/reverse_geocode",
+                "geo/search",
+                "geo/similar_places",
+                "help/configuration",
+                "help/languages",
+                "help/privacy",
+                "help/tos",
+                "lists/list",
+                "lists/members",
+                "lists/members/show",
+                "lists/memberships",
+                "lists/ownerships",
+                "lists/show",
+                "lists/statuses",
+                "lists/subscribers",
+                "lists/subscribers/show",
+                "lists/subscriptions",
+                "mutes/users/ids",
+                "mutes/users/list",
+                "oauth/authenticate",
+                "oauth/authorize",
+                "saved_searches/list",
+                "saved_searches/show/:id",
+                "search/tweets",
+                "statuses/home_timeline",
+                "statuses/mentions_timeline",
+                "statuses/oembed",
+                "statuses/retweeters/ids",
+                "statuses/retweets/:id",
+                "statuses/retweets_of_me",
+                "statuses/show/:id",
+                "statuses/user_timeline",
+                "trends/available",
+                "trends/closest",
+                "trends/place",
+                "users/contributees",
+                "users/contributors",
+                "users/profile_banner",
+                "users/search",
+                "users/show",
+                "users/suggestions",
+                "users/suggestions/:slug",
+                "users/suggestions/:slug/members",
+
+                // Internal
+                "users/recommendations",
+                "account/push_destinations/device",
+                "activity/about_me",
+                "activity/by_friends",
+                "statuses/media_timeline",
+                "timeline/home",
+                "help/experiments",
+                "search/typeahead",
+                "search/universal",
+                "discover/universal",
+                "conversation/show",
+                "statuses/:id/activity/summary",
+                "account/login_verification_enrollment",
+                "account/login_verification_request",
+                "prompts/suggest",
+
+                "beta/timelines/custom/list",
+                "beta/timelines/timeline",
+                "beta/timelines/custom/show"
+            ],
+            POST: [
+                "account/remove_profile_banner",
+                "account/settings__post",
+                "account/update_delivery_device",
+                "account/update_profile",
+                "account/update_profile_background_image",
+                "account/update_profile_banner",
+                "account/update_profile_colors",
+                "account/update_profile_image",
+                "blocks/create",
+                "blocks/destroy",
+                "direct_messages/destroy",
+                "direct_messages/new",
+                "favorites/create",
+                "favorites/destroy",
+                "friendships/create",
+                "friendships/destroy",
+                "friendships/update",
+                "lists/create",
+                "lists/destroy",
+                "lists/members/create",
+                "lists/members/create_all",
+                "lists/members/destroy",
+                "lists/members/destroy_all",
+                "lists/subscribers/create",
+                "lists/subscribers/destroy",
+                "lists/update",
+                "media/upload",
+                "mutes/users/create",
+                "mutes/users/destroy",
+                "oauth/access_token",
+                "oauth/request_token",
+                "oauth2/invalidate_token",
+                "oauth2/token",
+                "saved_searches/create",
+                "saved_searches/destroy/:id",
+                "statuses/destroy/:id",
+                "statuses/lookup",
+                "statuses/retweet/:id",
+                "statuses/update",
+                "statuses/update_with_media", // deprecated, use media/upload
+                "users/lookup",
+                "users/report_spam",
+
+                // Internal
+                "direct_messages/read",
+                "account/login_verification_enrollment__post",
+                "push_destinations/enable_login_verification",
+                "account/login_verification_request__post",
+
+                "beta/timelines/custom/create",
+                "beta/timelines/custom/update",
+                "beta/timelines/custom/destroy",
+                "beta/timelines/custom/add",
+                "beta/timelines/custom/remove"
+            ]
+        };
+        return httpmethods;
+    };
 
     /**
      * Main API handler working on any requests you issue
      *
-     * @param string fn    The member function you called
-     * @param array params The parameters you sent along
+     * @param string   fn            The member function you called
+     * @param array    params        The parameters you sent along
+     * @param function callback      The callback to call with the reply
+     * @param bool     app_only_auth Whether to use app-only auth
      *
      * @return mixed The API reply encoded in the set return_format
      */
 
-    var __call = function (fn, params, callback) {
-        if (typeof params == 'undefined') {
-            var params = {};
+    var __call = function (fn, params, callback, app_only_auth) {
+        if (typeof params === "undefined") {
+            params = {};
         }
-        if (typeof this[fn] == 'function') {
-            return this[fn](params);
+        if (typeof app_only_auth === "undefined") {
+            app_only_auth = false;
         }
-        if (typeof callback == 'undefined' && typeof params == 'function') {
+        if (typeof callback !== "function" && typeof params === "function") {
             callback = params;
             params = {};
-        } else if (typeof callback == 'undefined') {
-            callback = function (reply) {};
+            if (typeof callback === "boolean") {
+                app_only_auth = callback;
+            }
+        } else if (typeof callback === "undefined") {
+            callback = function () {};
+        }
+        switch (fn) {
+        case "oauth_authenticate":
+        case "oauth_authorize":
+            return this[fn](params, callback);
+
+        case "oauth2_token":
+            return this[fn](callback);
+        }
+        // reset token when requesting a new token (causes 401 for signature error on 2nd+ requests)
+        if (fn === "oauth_requestToken") {
+            setToken(null, null);
         }
         // parse parameters
         var apiparams = {};
-        if (typeof params == 'object') {
+        if (typeof params === "object") {
             apiparams = params;
         } else {
-            parse_str(params, apiparams); //TODO
+            _parse_str(params, apiparams); //TODO
         }
 
         // map function name to API method
-        var method = '';
+        var method = "";
+        var param, i, j;
 
         // replace _ by /
-        var path = fn.split('_');
-        for (var i = 0; i < path.length; i++) {
+        var path = fn.split("_");
+        for (i = 0; i < path.length; i++) {
             if (i > 0) {
-                method += '/';
+                method += "/";
             }
             method += path[i];
         }
+
         // undo replacement for URL parameters
-        var url_parameters_with_underscore = ['screen_name'];
+        var url_parameters_with_underscore = ["screen_name", "place_id"];
         for (i = 0; i < url_parameters_with_underscore.length; i++) {
-            var param = url_parameters_with_underscore[i].toUpperCase();
-            var replacement_was = param.split('_').join('/');
+            param = url_parameters_with_underscore[i].toUpperCase();
+            var replacement_was = param.split("_").join("/");
             method = method.split(replacement_was).join(param);
         }
 
         // replace AA by URL parameters
         var method_template = method;
-        var match = [];
-        if (match = method.match('/[A-Z_]{2,}/')) {
-            for (var i = 0; i < match.length; i++) {
-                var param = match[i];
+        var match = method.match(/[A-Z_]{2,}/);
+        if (match) {
+            for (i = 0; i < match.length; i++) {
+                param = match[i];
                 var param_l = param.toLowerCase();
-                method_template = method_template.split(param).join(':' + param_l);
-                if (typeof apiparams[param_l] != 'undefined') {
+                method_template = method_template.split(param).join(":" + param_l);
+                if (typeof apiparams[param_l] === "undefined") {
                     for (j = 0; j < 26; j++) {
-                        method_template = method_template.split(String.fromCharCode(65 + j)).join('_' + String.fromCharCode(97 + j));
+                        method_template = method_template.split(String.fromCharCode(65 + j)).join("_" + String.fromCharCode(97 + j));
                     }
-                    c('To call the templated method "' + method_template + '", specify the parameter value for "' + param_l + '".');
+                    console.warn("To call the templated method \"" + method_template + "\", specify the parameter value for \"" + param_l + "\".");
                 }
                 method = method.split(param).join(apiparams[param_l]);
                 delete apiparams[param_l];
@@ -304,43 +538,23 @@ var Codebird = function () {
 
         // replace A-Z by _a-z
         for (i = 0; i < 26; i++) {
-            method = method.split(String.fromCharCode(65 + i)).join('_' + String.fromCharCode(97 + i));
-            method_template = method_template.split(String.fromCharCode(65 + i)).join('_' + String.fromCharCode(97 + i));
+            method = method.split(String.fromCharCode(65 + i)).join("_" + String.fromCharCode(97 + i));
+            method_template = method_template.split(String.fromCharCode(65 + i)).join("_" + String.fromCharCode(97 + i));
         }
 
         var httpmethod = _detectMethod(method_template, apiparams);
         var multipart = _detectMultipart(method_template);
+        var internal = _detectInternal(method_template);
 
-        return _callApi(httpmethod, method, method_template, apiparams, multipart, callback);
-    };
-
-    /**
-     * Uncommon API methods
-     */
-
-    /**
-     * The public timeline is cached for 1 minute
-     * API method wrapper
-     *
-     * @param mixed Any parameters are sent to __call, untouched
-     *
-     * @return mixed The API reply
-     */
-    var statuses_publicTimeline = function (mixed) {
-        if (typeof mixed == 'undefined') {
-            var mixed = null;
-        }
-        if (_statuses_public_timeline_cache['timestamp'] && _statuses_public_timeline_cache['timestamp'] + 60 > Math.round(new Date().getTime() / 1000)) {
-            return _statuses_public_timeline_cache['data'];
-        }
-        var reply = __call('statuses_publicTimeline', arguments);
-        if (reply.httpstatus == 200) {
-            _statuses_public_timeline_cache = {
-                timestamp: Math.round(new Date().getTime() / 1000),
-                data: reply
-            };
-        }
-        return reply;
+        return _callApi(
+            httpmethod,
+            method,
+            apiparams,
+            multipart,
+            app_only_auth,
+            internal,
+            callback
+        );
     };
 
     /**
@@ -348,11 +562,25 @@ var Codebird = function () {
      *
      * @return string The OAuth authenticate URL
      */
-    var oauth_authenticate = function () {
-        if (_oauth_token == null) {
-            c('To get the authenticate URL, the OAuth token must be set.');
+    var oauth_authenticate = function (params, callback) {
+        if (typeof params.force_login === "undefined") {
+            params.force_login = null;
         }
-        return _endpoint_oauth + 'oauth/authenticate?oauth_token=' + _url(_oauth_token);
+        if (typeof params.screen_name === "undefined") {
+            params.screen_name = null;
+        }
+        if (_oauth_token === null) {
+            console.warn("To get the authenticate URL, the OAuth token must be set.");
+        }
+        var url = _endpoint_oauth + "oauth/authenticate?oauth_token=" + _url(_oauth_token);
+        if (params.force_login === true) {
+            url += "&force_login=1";
+            if (params.screen_name !== null) {
+                url += "&screen_name=" + params.screen_name;
+            }
+        }
+        callback(url);
+        return true;
     };
 
     /**
@@ -360,11 +588,83 @@ var Codebird = function () {
      *
      * @return string The OAuth authorize URL
      */
-    var oauth_authorize = function () {
-        if (_oauth_token == null) {
-            c('To get the authorize URL, the OAuth token must be set.');
+    var oauth_authorize = function (params, callback) {
+        if (typeof params.force_login === "undefined") {
+            params.force_login = null;
         }
-        return _endpoint_oauth + 'oauth/authorize?oauth_token=' + _url(_oauth_token);
+        if (typeof params.screen_name === "undefined") {
+            params.screen_name = null;
+        }
+        if (_oauth_token === null) {
+            console.warn("To get the authorize URL, the OAuth token must be set.");
+        }
+        var url = _endpoint_oauth + "oauth/authorize?oauth_token=" + _url(_oauth_token);
+        if (params.force_login === true) {
+            url += "&force_login=1";
+            if (params.screen_name !== null) {
+                url += "&screen_name=" + params.screen_name;
+            }
+        }
+        callback(url);
+        return true;
+    };
+
+    /**
+     * Gets the OAuth bearer token
+     *
+     * @return string The OAuth bearer token
+     */
+
+    var oauth2_token = function (callback) {
+        if (_oauth_consumer_key === null) {
+            console.warn("To obtain a bearer token, the consumer key must be set.");
+        }
+
+        if (typeof callback === "undefined") {
+            callback = function () {};
+        }
+
+        var post_fields = "grant_type=client_credentials";
+        var url = _endpoint_oauth + "oauth2/token";
+
+        if (_use_proxy) {
+            url = url.replace(
+                _endpoint_base,
+                _endpoint_proxy
+            );
+        }
+
+        var xml = _getXmlRequestObject();
+        if (xml === null) {
+            return;
+        }
+        xml.open("POST", url, true);
+        xml.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+        xml.setRequestHeader(
+            (_use_proxy ? "X-" : "") + "Authorization",
+            "Basic " + _base64_encode(_oauth_consumer_key + ":" + _oauth_consumer_secret)
+        );
+
+        xml.onreadystatechange = function () {
+            if (xml.readyState >= 4) {
+                var httpstatus = 12027;
+                try {
+                    httpstatus = xml.status;
+                } catch (e) {}
+                var response = "";
+                try {
+                    response = xml.responseText;
+                } catch (e) {}
+                var reply = _parseApiReply(response);
+                reply.httpstatus = httpstatus;
+                if (httpstatus === 200) {
+                    setBearerToken(reply.access_token);
+                }
+                callback(reply);
+            }
+        };
+        xml.send(post_fields);
+
     };
 
     /**
@@ -379,32 +679,204 @@ var Codebird = function () {
      * @return mixed The encoded data
      */
     var _url = function (data) {
-        if (typeof data == 'array') {
-            return array_map([ // TODO
-            this, '_url'], data);
-        } else if ((/boolean|number|string/).test(typeof data)) {
-            return encodeURIComponent(data).replace(/!/g, '%21').replace(/'/g, '%27').replace(/\(/g, '%28').replace(/\)/g, '%29').replace(/\*/g, '%2A');
+        if ((/boolean|number|string/).test(typeof data)) {
+            return encodeURIComponent(data).replace(/!/g, "%21").replace(/'/g, "%27").replace(/\(/g, "%28").replace(/\)/g, "%29").replace(/\*/g, "%2A");
         } else {
-            return '';
+            return "";
         }
-    }
+    };
 
     /**
      * Gets the base64-encoded SHA1 hash for the given data
+     *
+     * A JavaScript implementation of the Secure Hash Algorithm, SHA-1, as defined
+     * in FIPS PUB 180-1
+     * Based on version 2.1 Copyright Paul Johnston 2000 - 2002.
+     * Other contributors: Greg Holt, Andrew Kepert, Ydnar, Lostinet
+     * Distributed under the BSD License
+     * See http://pajhome.org.uk/crypt/md5 for details.
      *
      * @param string data The data to calculate the hash from
      *
      * @return string The hash
      */
-    var _sha1 = function (data) {
-        if (_oauth_consumer_secret == null) {
-            c('To generate a hash, the consumer secret must be set.');
+    var _sha1 = function () {
+        function n(e, b) {
+            e[b >> 5] |= 128 << 24 - b % 32;
+            e[(b + 64 >> 9 << 4) + 15] = b;
+            for (var c = new Array(80), a = 1732584193, d = -271733879, h = -1732584194,
+                    k = 271733878, g = -1009589776, p = 0; p < e.length; p += 16) {
+                for (var o = a, q = d, r = h, s = k, t = g, f = 0; 80 > f; f++) {
+                    var m;
+
+                    if (f < 16) {
+                        m = e[p + f];
+                    } else {
+                        m = c[f - 3] ^ c[f - 8] ^ c[f - 14] ^ c[f - 16];
+                        m = m << 1 | m >>> 31;
+                    }
+
+                    c[f] = m;
+                    m = l(l(a << 5 | a >>> 27, 20 > f ? d & h | ~d & k : 40 > f ? d ^
+                        h ^ k : 60 > f ? d & h | d & k | h & k : d ^ h ^ k), l(
+                        l(g, c[f]), 20 > f ? 1518500249 : 40 > f ? 1859775393 :
+                        60 > f ? -1894007588 : -899497514));
+                    g = k;
+                    k = h;
+                    h = d << 30 | d >>> 2;
+                    d = a;
+                    a = m;
+                }
+                a = l(a, o);
+                d = l(d, q);
+                h = l(h, r);
+                k = l(k, s);
+                g = l(g, t);
+            }
+            return [a, d, h, k, g];
         }
-        if (typeof sha1.b64_hmac_sha1 != 'function') {
-            c('To generate a hash, the Javascript SHA1.js must be available.');
+
+        function l(e, b) {
+            var c = (e & 65535) + (b & 65535);
+            return (e >> 16) + (b >> 16) + (c >> 16) << 16 | c & 65535;
         }
-        b64pad = '=';
-        return sha1.b64_hmac_sha1(_oauth_consumer_secret + '&' + (_oauth_token_secret != null ? _oauth_token_secret : ''), data);
+
+        function q(e) {
+            for (var b = [], c = (1 << g) - 1, a = 0; a < e.length * g; a += g) {
+                b[a >> 5] |= (e.charCodeAt(a / g) & c) << 24 - a % 32;
+            }
+            return b;
+        }
+        var g = 8;
+        return function (e) {
+            var b = _url(_oauth_consumer_secret) + "&" + (null !== _oauth_token_secret ?
+                _url(_oauth_token_secret) : "");
+            if (_oauth_consumer_secret === null) {
+                console.warn("To generate a hash, the consumer secret must be set.");
+            }
+            var c = q(b);
+            if (c.length > 16) {
+                c = n(c, b.length * g);
+            }
+            b = new Array(16);
+            for (var a = new Array(16), d = 0; d < 16; d++) {
+                a[d] = c[d] ^ 909522486;
+                b[d] = c[d] ^ 1549556828;
+            }
+            c = n(a.concat(q(e)), 512 + e.length * g);
+            b = n(b.concat(c), 672);
+            c = "";
+            for (a = 0; a < 4 * b.length; a += 3) {
+                for (d = (b[a >> 2] >> 8 * (3 - a % 4) & 255) << 16 | (b[a + 1 >> 2] >>
+                    8 * (3 - (a + 1) % 4) & 255) << 8 | b[a + 2 >> 2] >> 8 * (3 -
+                    (a + 2) % 4) & 255, e = 0; 4 > e; e++) {
+                    c = 8 * a + 6 * e > 32 * b.length ? c + "=" : c +
+                        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+                        .charAt(d >> 6 * (3 - e) & 63);
+                }
+            }
+            return c;
+        };
+    }();
+
+    /*
+     * Gets the base64 representation for the given data
+     *
+     * http://phpjs.org
+     * +   original by: Tyler Akins (http://rumkin.com)
+     * +   improved by: Bayron Guevara
+     * +   improved by: Thunder.m
+     * +   improved by: Kevin van Zonneveld (http://kevin.vanzonneveld.net)
+     * +   bugfixed by: Pellentesque Malesuada
+     * +   improved by: Kevin van Zonneveld (http://kevin.vanzonneveld.net)
+     * +   improved by: Rafał Kukawski (http://kukawski.pl)
+     *
+     * @param string data The data to calculate the base64 representation from
+     *
+     * @return string The base64 representation
+     */
+    var _base64_encode = function (a) {
+        var d, e, f, b, g = 0,
+            h = 0,
+            i = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
+            c = [];
+        if (!a) {
+            return a;
+        }
+        do {
+            d = a.charCodeAt(g++);
+            e = a.charCodeAt(g++);
+            f = a.charCodeAt(g++);
+            b = d << 16 | e << 8 | f;
+            d = b >> 18 & 63;
+            e = b >> 12 & 63;
+            f = b >> 6 & 63;
+            b &= 63;
+            c[h++] = i.charAt(d) + i.charAt(e) + i.charAt(f) + i.charAt(b);
+        } while (g < a.length);
+        c = c.join("");
+        a = a.length % 3;
+        return (a ? c.slice(0, a - 3) : c) + "===".slice(a || 3);
+    };
+
+    /*
+     * Builds a HTTP query string from the given data
+     *
+     * http://phpjs.org
+     * +     original by: Kevin van Zonneveld (http://kevin.vanzonneveld.net)
+     * +     improved by: Legaev Andrey
+     * +     improved by: Michael White (http://getsprink.com)
+     * +     improved by: Kevin van Zonneveld (http://kevin.vanzonneveld.net)
+     * +     improved by: Brett Zamir (http://brett-zamir.me)
+     * +        revised by: stag019
+     * +     input by: Dreamer
+     * +     bugfixed by: Brett Zamir (http://brett-zamir.me)
+     * +     bugfixed by: MIO_KODUKI (http://mio-koduki.blogspot.com/)
+     *
+     * @param string data The data to concatenate
+     *
+     * @return string The HTTP query
+     */
+    var _http_build_query = function (e, f, b) {
+        function g(c, a, d) {
+            var b, e = [];
+            if (a === true) {
+                a = "1";
+            } else if (a === false) {
+                a = "0";
+            }
+            if (null !== a) {
+                if (typeof a === "object") {
+                    for (b in a) {
+                        if (a[b] !== null) {
+                            e.push(g(c + "[" + b + "]", a[b], d));
+                        }
+                    }
+                    return e.join(d);
+                }
+                if (typeof a !== "function") {
+                    return _url(c) + "=" + _url(a);
+                }
+                console.warn("There was an error processing for http_build_query().");
+            } else {
+                return "";
+            }
+        }
+        var d, c, h = [];
+        if (! b) {
+            b = "&";
+        }
+        for (c in e) {
+            d = e[c];
+            if (f && ! isNaN(c)) {
+                c = String(f) + c;
+            }
+            d = g(c, d, b);
+            if (d !== "") {
+                h.push(d);
+            }
+        }
+        return h.join(b);
     };
 
     /**
@@ -415,104 +887,148 @@ var Codebird = function () {
      * @return string The random string
      */
     var _nonce = function (length) {
-        if (typeof length == 'undefined') {
-            var length = 8;
+        if (typeof length === "undefined") {
+            length = 10;
+            //1856431163
         }
         if (length < 1) {
-            c('Invalid nonce length.');
+            console.warn("Invalid nonce length.");
         }
-        var nonce = '';
+        var nonce = "";
         for (var i = 0; i < length; i++) {
             var character = Math.floor(Math.random() * 61);
-            nonce += '0123456789ABCDEFGHIJKLMNOPQRSTUVWXTZabcdefghiklmnopqrstuvwxyz'.substring(character, character + 1);
+            nonce += "0123456789ABCDEFGHIJKLMNOPQRSTUVWXTZabcdefghiklmnopqrstuvwxyz".substring(character, character + 1);
         }
         return nonce;
     };
 
     /**
-     * Sort an array by key
+     * Sort array elements by key
      *
-     * @param array a The array to sort
-     * @return array The sorted array
+     * @param array input_arr The array to sort
+     *
+     * @return array The sorted keys
      */
-    var _ksort = function (a) {
-        var b = {},
-        f = [],
-            c, d, e = [];
-        for (d in a) a.hasOwnProperty && f.push(d);
-        f.sort(function (g, h) {
-            if (g > h) return 1;
-            if (g < h) return -1;
-            return 0
-        });
-        for (c = 0; c < f.length; c++) {
-            d = f[c];
-            b[d] = a[d]
+    var _ksort = function (input_arr) {
+        var keys = [], sorter, k;
+
+        sorter = function (a, b) {
+            var a_float = parseFloat(a),
+            b_float = parseFloat(b),
+            a_numeric = a_float + "" === a,
+            b_numeric = b_float + "" === b;
+            if (a_numeric && b_numeric) {
+                return a_float > b_float ? 1 : a_float < b_float ? -1 : 0;
+            } else if (a_numeric && !b_numeric) {
+                return 1;
+            } else if (!a_numeric && b_numeric) {
+                return -1;
+            }
+            return a > b ? 1 : a < b ? -1 : 0;
+        };
+
+        // Make a list of key names
+        for (k in input_arr) {
+            if (input_arr.hasOwnProperty(k)) {
+                keys.push(k);
+            }
         }
-        for (c in b) if (b.hasOwnProperty) e[c] = b[c];
-        return e
+        keys.sort(sorter);
+        return keys;
+    };
+
+    /**
+     * Clone objects
+     *
+     * @param object obj    The object to clone
+     *
+     * @return object clone The cloned object
+     */
+    var _clone = function (obj) {
+        var clone = {};
+        for (var i in obj) {
+            if (typeof(obj[i]) === "object") {
+                clone[i] = _clone(obj[i]);
+            } else {
+                clone[i] = obj[i];
+            }
+        }
+        return clone;
     };
 
     /**
      * Generates an OAuth signature
      *
-     * @param string          httpmethod Usually either 'GET' or 'POST' or 'DELETE'
-     * @param string          method     The API method to call
-     * @param array  optional params     The API call parameters, associative
-     * @param bool   optional multipart  Whether the request is going to be multipart/form-data
+     * @param string          httpmethod    Usually either 'GET' or 'POST' or 'DELETE'
+     * @param string          method        The API method to call
+     * @param array  optional params        The API call parameters, associative
+     * @param bool   optional append_to_get Whether to append the OAuth params to GET
      *
-     * @return string The API call parameters including the signature
-     *                If multipart, the Authorization HTTP header is returned
+     * @return string Authorization HTTP header
      */
-    var _sign = function (httpmethod, method, params, multipart) {
-        if (typeof params == 'undefined') {
-            var params = {};
+    var _sign = function (httpmethod, method, params, append_to_get) {
+        if (typeof params === "undefined") {
+            params = {};
         }
-        if (typeof multipart == 'undefined') {
-            var multipart = false;
+        if (typeof append_to_get === "undefined") {
+            append_to_get = false;
         }
-        if (_oauth_consumer_key == null) {
-            c('To generate a signature, the consumer key must be set.');
+        if (_oauth_consumer_key === null) {
+            console.warn("To generate a signature, the consumer key must be set.");
         }
         var sign_params = {
-            consumer_key: _oauth_consumer_key,
-            version: '1.0',
-            timestamp: Math.round(new Date().getTime() / 1000),
-            nonce: _nonce(),
-            signature_method: 'HMAC-SHA1'
+            consumer_key:     _oauth_consumer_key,
+            version:          "1.0",
+            timestamp:        Math.round(new Date().getTime() / 1000),
+            nonce:            _nonce(),
+            signature_method: "HMAC-SHA1"
         };
         var sign_base_params = {};
+        var value;
         for (var key in sign_params) {
-            var value = sign_params[key];
-            sign_base_params['oauth_' + key] = _url(value);
+            value = sign_params[key];
+            sign_base_params["oauth_" + key] = _url(value);
         }
-        if (_oauth_token != null) {
-            sign_base_params['oauth_token'] = _url(_oauth_token);
+        if (_oauth_token !== null) {
+            sign_base_params.oauth_token = _url(_oauth_token);
         }
-        for (var key in params) {
-            var value = params[key];
-            sign_base_params[key] = _url(value);
+        var oauth_params = _clone(sign_base_params);
+        for (key in params) {
+            value = params[key];
+            sign_base_params[key] = value;
         }
-        sign_base_params = _ksort(sign_base_params);
-        var sign_base_string = '';
-        for (var key in sign_base_params) {
-            var value = sign_base_params[key];
-            sign_base_string += key + '=' + value + '&';
+        var keys = _ksort(sign_base_params);
+        var sign_base_string = "";
+        for (var i = 0; i < keys.length; i++) {
+            key = keys[i];
+            value = sign_base_params[key];
+            sign_base_string += key + "=" + _url(value) + "&";
         }
+                        
         sign_base_string = sign_base_string.substring(0, sign_base_string.length - 1);
-        var signature = _sha1(httpmethod + '&' + _url(method) + '&' + _url(sign_base_string));
-        if (multipart) {
-            params = sign_base_params;
-            params['oauth_signature'] = signature;
-            params = _ksort(params);
-            var authorization = 'Authorization: OAuth ';
-            for (var key in params) {
-                var value = params[key];
-                authorization += key + '="' + _url(value) + '", ';
+        var signature    = _sha1(httpmethod + "&" + _url(method) + "&" + _url(sign_base_string));
+
+        //console.log(httpmethod + "&" + _url(method) + "&" + _url(sign_base_string));
+
+        params = append_to_get ? sign_base_params : oauth_params;
+        params.oauth_signature = signature;
+        keys = _ksort(params);
+        var authorization = "";
+        if (append_to_get) {
+            for(i = 0; i < keys.length; i++) {
+                key = keys[i];
+                value = params[key];
+                authorization += key + "=" + _url(value) + "&";
             }
-            return authorization.substring(0, authorization.length - 2);
+            return authorization.substring(0, authorization.length - 1);
         }
-        return (httpmethod == 'GET' ? method + '?' : '') + sign_base_string + '&oauth_signature=' + _url(signature);
+        authorization = "OAuth ";
+        for (i = 0; i < keys.length; i++) {
+            key = keys[i];
+            value = params[key];
+            authorization += key + "=\"" + _url(value) + "\", ";
+        }
+        return authorization.substring(0, authorization.length - 2);
     };
 
     /**
@@ -525,167 +1041,21 @@ var Codebird = function () {
      */
     var _detectMethod = function (method, params) {
         // multi-HTTP method endpoints
-        switch(method) {
-            case 'account/settings':
-                method = params.length ? method + '__post' : method;
-                break;
+        switch (method) {
+        case "account/settings":
+        case "account/login_verification_enrollment":
+        case "account/login_verification_request":
+            method = params.length ? method + "__post" : method;
+            break;
         }
 
-        var httpmethods = {};
-        httpmethods['GET'] = [
-            // Timelines
-            'statuses/mentions_timeline',
-            'statuses/user_timeline',
-            'statuses/home_timeline',
-            'statuses/retweets_of_me',
-
-            // Tweets
-            'statuses/retweets/:id',
-            'statuses/show/:id',
-            'statuses/oembed',
-
-            // Search
-            'search/tweets',
-
-            // Direct Messages
-            'direct_messages',
-            'direct_messages/sent',
-            'direct_messages/show',
-
-            // Friends & Followers
-            'friends/ids',
-            'followers/ids',
-            'friendships/lookup',
-            'friendships/incoming',
-            'friendships/outgoing',
-            'friendships/show',
-            'friends/list',
-            'followers/list',
-
-            // Users
-            'account/settings',
-            'account/verify_credentials',
-            'blocks/list',
-            'blocks/ids',
-            'users/lookup',
-            'users/show',
-            'users/search',
-            'users/contributees',
-            'users/contributors',
-            'users/profile_banner',
-
-            // Suggested Users
-            'users/suggestions/:slug',
-            'users/suggestions',
-            'users/suggestions/:slug/members',
-
-            // Favorites
-            'favorites/list',
-
-            // Lists
-            'lists/list',
-            'lists/statuses',
-            'lists/memberships',
-            'lists/subscribers',
-            'lists/subscribers/show',
-            'lists/members/show',
-            'lists/members',
-            'lists/show',
-            'lists/subscriptions',
-
-            // Saved searches
-            'saved_searches/list',
-            'saved_searches/show/:id',
-
-            // Places & Geo
-            'geo/id/:place_id',
-            'geo/reverse_geocode',
-            'geo/search',
-            'geo/similar_places',
-
-            // Trends
-            'trends/place',
-            'trends/available',
-            'trends/closest',
-
-            // OAuth
-            'oauth/authenticate',
-            'oauth/authorize',
-
-            // Help
-            'help/configuration',
-            'help/languages',
-            'help/privacy',
-            'help/tos',
-            'application/rate_limit_status',
-
-            // Old
-            'users/recommendations'
-        ];
-        httpmethods['POST'] = [
-            // Tweets
-            'statuses/destroy/:id',
-            'statuses/update',
-            'statuses/retweet/:id',
-            'statuses/update_with_media',
-
-            // Direct Messages
-            'direct_messages/destroy',
-            'direct_messages/new',
-
-            // Friends & Followers
-            'friendships/create',
-            'friendships/destroy',
-            'friendships/update',
-
-            // Users
-            'account/settings__post',
-            'account/update_delivery_device',
-            'account/update_profile',
-            'account/update_profile_background_image',
-            'account/update_profile_colors',
-            'account/update_profile_image',
-            'blocks/create',
-            'blocks/destroy',
-            'account/update_profile_banner',
-            'account/remove_profile_banner',
-
-            // Favorites
-            'favorites/destroy',
-            'favorites/create',
-
-            // Lists
-            'lists/members/destroy',
-            'lists/subscribers/create',
-            'lists/subscribers/destroy',
-            'lists/members/create_all',
-            'lists/members/create',
-            'lists/destroy',
-            'lists/update',
-            'lists/create',
-            'lists/members/destroy_all',
-
-            // Saved Searches
-            'saved_searches/create',
-            'saved_searches/destroy/:id',
-
-            // Places & Geo
-            'geo/place',
-
-            // Spam Reporting
-            'users/report_spam',
-
-            // OAuth
-            'oauth/access_token',
-            'oauth/request_token'
-        ];
-        for (var httpmethod in httpmethods) {
-            var methods = httpmethods[httpmethod].join(' ');
-            if (methods.indexOf(method) > -1) {
+        var apimethods = getApiMethods();
+        for (var httpmethod in apimethods) {
+            if (apimethods[httpmethod].indexOf(method) > -1) {
                 return httpmethod;
             }
         }
-        c('Can\'t find HTTP method to use for "' + method + '".');
+        console.warn("Can't find HTTP method to use for \"" + method + "\".");
     };
 
     /**
@@ -698,18 +1068,102 @@ var Codebird = function () {
     var _detectMultipart = function (method) {
         var multiparts = [
             // Tweets
-            'statuses/update_with_media',
+            "statuses/update_with_media",
 
             // Users
-            'account/update_profile_background_image',
-            'account/update_profile_image',
-            'account/update_profile_banner'
+            "account/update_profile_background_image",
+            "account/update_profile_image",
+            "account/update_profile_banner"
         ];
-        return multiparts.join(' ').indexOf(method) > -1;
+        return multiparts.indexOf(method) > -1;
     };
 
     /**
-     * Detects if API call should use the old endpoint
+     * Build multipart request from upload params
+     *
+     * @param string method  The API method to call
+     * @param array  params  The parameters to send along
+     *
+     * @return null|string The built multipart request body
+     */
+    var _buildMultipart = function (method, params) {
+        // well, files will only work in multipart methods
+        if (! _detectMultipart(method)) {
+            return;
+        }
+
+        // only check specific parameters
+        var possible_methods = [
+            // Tweets
+            "statuses/update_with_media",
+            // Accounts
+            "account/update_profile_background_image",
+            "account/update_profile_image",
+            "account/update_profile_banner"
+        ];
+        var possible_files = {
+            // Tweets
+            "statuses/update_with_media": "media[]",
+            // Accounts
+            "account/update_profile_background_image": "image",
+            "account/update_profile_image": "image",
+            "account/update_profile_banner": "banner"
+        };
+        // method might have files?
+        if (possible_methods.indexOf(method) === -1) {
+            return;
+        }
+
+        // check for filenames
+        possible_files = possible_files[method].split(" ");
+
+        var multipart_border = "--------------------" + _nonce();
+        var multipart_request = "";
+        for (var key in params) {
+            multipart_request +=
+                "--" + multipart_border + "\r\n"
+                + "Content-Disposition: form-data; name=\"" + key + "\"";
+            if (possible_files.indexOf(key) > -1) {
+                multipart_request +=
+                    "\r\nContent-Transfer-Encoding: base64";
+            }
+            multipart_request +=
+                "\r\n\r\n" + params[key] + "\r\n";
+        }
+        multipart_request += "--" + multipart_border + "--";
+        return multipart_request;
+    };
+
+    /**
+     * Detects if API call is internal
+     *
+     * @param string method The API method to call
+     *
+     * @return bool Whether the method is defined in internal API
+     */
+    var _detectInternal = function (method) {
+        var internals = [
+            "users/recommendations"
+        ];
+        return internals.join(" ").indexOf(method) > -1;
+    };
+
+    /**
+     * Detects if API call should use media endpoint
+     *
+     * @param string method The API method to call
+     *
+     * @return bool Whether the method is defined in media API
+     */
+    var _detectMedia = function (method) {
+        var medias = [
+            "media/upload"
+        ];
+        return medias.join(" ").indexOf(method) > -1;
+    };
+
+    /**
+     * Detects if API call should use old endpoint
      *
      * @param string method The API method to call
      *
@@ -717,197 +1171,282 @@ var Codebird = function () {
      */
     var _detectOld = function (method) {
         var olds = [
-            // Users
-            'users/recommendations'
+            "account/push_destinations/device"
         ];
-        return olds.join(' ').indexOf(method) > -1;
+        return olds.join(" ").indexOf(method) > -1;
     };
 
     /**
      * Builds the complete API endpoint url
      *
-     * @param string method           The API method to call
-     * @param string method_template  The API method template to call
+     * @param string method The API method to call
      *
      * @return string The URL to send the request to
      */
-    var _getEndpoint = function (method, method_template) {
-        if (method.substring(0, 6) == 'oauth/') {
+    var _getEndpoint = function (method) {
+        var url;
+        if (method.substring(0, 5) === "oauth") {
             url = _endpoint_oauth + method;
-        } else if (_detectOld(method_template)) {
-            url = _endpoint_old + method + '.json';
+        } else if (_detectMedia(method)) {
+            url = _endpoint_media + method + ".json";
+        } else if (_detectOld(method)) {
+            url = _endpoint_old + method + ".json";
         } else {
-            url = _endpoint + method + '.json';
+            url = _endpoint + method + ".json";
         }
         return url;
     };
 
     /**
+     * Gets the XML HTTP Request object, trying to load it in various ways
+     *
+     * @return object The XMLHttpRequest object instance
+     */
+    var _getXmlRequestObject = function () {
+        var xml = null;
+        // first, try the W3-standard object
+        if (typeof window === "object"
+            && window
+            && typeof window.XMLHttpRequest !== "undefined"
+        ) {
+            xml = new window.XMLHttpRequest();
+        // then, try Titanium framework object
+        } else if (typeof Ti === "object"
+            && Ti
+            && typeof Ti.Network.createHTTPClient !== "undefined"
+        ) {
+            xml = Ti.Network.createHTTPClient();
+        // are we in an old Internet Explorer?
+        } else if (typeof ActiveXObject !== "undefined"
+        ) {
+            try {
+                xml = new ActiveXObject("Microsoft.XMLHTTP");
+            } catch (e) {
+                console.error("ActiveXObject object not defined.");
+            }
+        // now, consider RequireJS and/or Node.js objects
+        } else if (typeof require === "function"
+            && require
+        ) {
+            // look for xmlhttprequest module
+            try {
+                var XMLHttpRequest = require("xmlhttprequest").XMLHttpRequest;
+                xml = new XMLHttpRequest();
+            } catch (e1) {
+                // or maybe the user is using xhr2
+                try {
+                    var XMLHttpRequest = require("xhr2");
+                    xml = new XMLHttpRequest();
+                } catch (e2) {
+                    console.error("xhr2 object not defined, cancelling.");
+                }
+            }
+        }
+        return xml;
+    };
+
+    /**
      * Calls the API using cURL
      *
-     * @param string          httpmethod      The HTTP method to use for making the request
-     * @param string          method          The API method to call
-     * @param string          method_template The templated API method to call
-     * @param array  optional params          The parameters to send along
-     * @param bool   optional multipart       Whether to use multipart/form-data
-     * @param function        callback        The function to call with the API call result
+     * @param string          httpmethod    The HTTP method to use for making the request
+     * @param string          method        The API method to call
+     * @param array  optional params        The parameters to send along
+     * @param bool   optional multipart     Whether to use multipart/form-data
+     * @param bool   optional app_only_auth Whether to use app-only bearer authentication
+     * @param bool   optional internal      Whether to use internal call
+     * @param function        callback      The function to call with the API call result
      *
      * @return mixed The API reply, encoded in the set return_format
      */
 
-    /* var _callApi = function (httpmethod, method, method_template, params, multipart, callback) {
-        if (typeof params == 'undefined') {
-            var params = {};
+    var _callApi = function (httpmethod, method, params, multipart, app_only_auth, internal, callback) {
+        if (typeof params === "undefined") {
+            params = {};
         }
-        if (typeof multipart == 'undefined') {
-            var multipart = false;
+        if (typeof multipart === "undefined") {
+            multipart = false;
         }
-        if (typeof callback != 'function') {
-            var callback = function (reply) {};
+        if (typeof app_only_auth === "undefined") {
+            app_only_auth = false;
+        }
+        if (typeof callback !== "function") {
+            callback = function () {};
+        }
+        if (internal) {
+            params.adc            = "phone";
+            params.application_id = 333903271;
         }
 
-        url = _getEndpoint(method, method_template);
-
-        var xml;
-        try {
-            xml = new XMLHttpRequest();
-        } catch (e) {
-            xml = new ActiveXObject('Microsoft.XMLHTTP');
-        }
-        if (httpmethod == 'GET') {
-            xml.open(httpmethod, _sign(httpmethod, url, params), true);
-        } else {
-            xml.open(httpmethod, url, true);
-            if (multipart) {
-                xml.setRequestHeader("Content-Type", "multipart/form-data");
-                var authorization = _sign('POST', url, {}, true);
-                xml.setRequestHeader("Authorization", authorization);
-                xml.setRequestHeader("Expect", '');
-                var post_fields = params;
-            } else {
-                xml.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-                var post_fields = _sign('POST', url, params);
-            }
-        }
-        xml.onreadystatechange = function () {
-            if (xml.readyState >= 4) {
-                var httpstatus = 12027;
-                try {
-                    httpstatus = xml.status;
-                } catch (e) {}
-                var reply = _parseApiReply(method_template, xml.responseText);
-                reply.httpstatus = httpstatus;
-                callback(reply);
-            }
-        };
-        xml.send(httpmethod == "GET" ? null : post_fields);
-        return true;
-    }; */
-
-    var _callApi = function (httpmethod, method, method_template, params, multipart, callback) {
+        var url           = _getEndpoint(method);
+        var authorization = null;
+        var post_fields;
         
-        if (typeof params == 'undefined') {
-            var params = {};
-        }
         
-        if (typeof multipart == 'undefined') {
-            var multipart = false;
-        }
-        
-        if (typeof callback != 'function') {
-            var callback = function (reply) {};
-        }
-
-        var url = _getEndpoint(method, method_template);
-    
         if(httpmethod == 'GET') {
             
-            Parse.Cloud.httpRequest({
-                url: _sign(httpmethod, url, params),
+            var url_with_params = url;
+            if (JSON.stringify(params) !== "{}") {
+                url_with_params += "?" + _http_build_query(params);
+            }
+            if (! app_only_auth) {
+                authorization = _sign(httpmethod, url, params);
+            }
+            
+            // append auth params to GET url for IE7-9, to send via JSONP
+            if (_use_jsonp) {
+                //TODO:check main codebird logic
+            } else if (_use_proxy) {
+                url_with_params = url_with_params.replace(
+                    _endpoint_base,
+                    _endpoint_proxy
+                ).replace(
+                    _endpoint_base_media,
+                    _endpoint_proxy
+                );
+            }
+            
+            console.log(httpmethod);
+            console.log(authorization);
+            console.log(params);
+            console.log(url_with_params);  
+            
+            return Parse.Cloud.httpRequest({
+                url: url_with_params,
+                headers: {                      
+                    'Authorization':  authorization,                      
+                },
                 success: function(httpResponse) {
                     console.log(httpResponse.text);
                 },
                 error: function(httpResponse) {
+                    console.log(httpResponse);
                     console.error('Request failed with response code ' + httpResponse.status);
                 }
             });
             
         } else {
             
-            if(multipart) {
+            if (_use_jsonp) {
+                console.warn("Sending POST requests is not supported for IE7-9.");
+                return;
+            }
+            
+            if (multipart) {
+                if (! app_only_auth) {
+                    authorization = _sign(httpmethod, url, {});
+                }
+                params = _buildMultipart(method, params);
+            } else {
+                if (! app_only_auth) {
+                    authorization = _sign(httpmethod, url, params);
+                }
+                params = _http_build_query(params);
+            }
+            
+            //var authorization = _sign('POST', url, {}, true);                
+            var post_fields = params;
+
+            if (_use_proxy || multipart) { // force proxy for multipart base64
+                url = url.replace(
+                    _endpoint_base,
+                    _endpoint_proxy
+                ).replace(
+                    _endpoint_base_media,
+                    _endpoint_proxy
+                );
+            }
                 
-                var authorization = _sign('POST', url, {}, true);
-                var post_fields = params;
+            if(multipart){
                 
-                Parse.Cloud.httpRequest({
+                console.log('multipart');
+                console.log(httpmethod);
+                console.log(authorization);
+                console.log(post_fields);
+                console.log(url);        
+                
+                return Parse.Cloud.httpRequest({
                     method: httpmethod,
                     url: url,
                     headers: {
-                        'Content-Type': 'multipart/form-data',
+                        'Content-Type': 'multipart/form-data; boundary=',
                         'Authorization':  authorization,
                         'Expect' : ''
                     },
                     body: post_fields,
-                    success: function(httpResponse) {
+                    success: function(httpResponse) {      
+                        callback(httpResponse);
                         console.log(httpResponse.text);
                     },
                     error: function(httpResponse) {
+                        console.log(httpResponse);
                         console.error('Request failed with response code ' + httpResponse.status);
                     }
                 });
                 
             } else {
-
-                var post_fields = _sign('POST', url, params);
-
-                Parse.Cloud.httpRequest({
+                                
+                console.log(httpmethod);
+                console.log(authorization);
+                console.log(post_fields);
+                console.log(url); 
+                
+                return Parse.Cloud.httpRequest({
                     method: httpmethod,
                     url: url,
                     headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded'
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Authorization':  authorization,
                     },
                     body: post_fields,
                     success: function(httpResponse) {
                         console.log(httpResponse.text);
                     },
                     error: function(httpResponse) {
+                        console.log(httpResponse);
                         console.error('Request failed with response code ' + httpResponse.status);
                     }
                 });                
             
             }
-            
-            
+                        
         }
-    
-        return true;
-
     };
 
     /**
      * Parses the API reply to encode it in the set return_format
      *
-     * @param string method The method that has been called
      * @param string reply  The actual reply, JSON-encoded or URL-encoded
      *
      * @return array|object The parsed reply
      */
-    var _parseApiReply = function (method, reply) {
-        if (reply == '[]') {
+    var _parseApiReply = function (reply) {
+        if (typeof reply !== "string" || reply === "") {
+            return {};
+        }
+        if (reply === "[]") {
             return [];
         }
-        var parsed = false;
+        var parsed;
         try {
             parsed = JSON.parse(reply);
         } catch (e) {
-            var elements = reply.split("&");
             parsed = {};
-            for (var i = 0; i < elements.length; i++) {
-                var element = elements[i].split("=", 2);
-                if (element.length > 1) {
-                    parsed[element[0]] = unescape(element[1]);
-                } else {
-                    parsed[element[0]] = null;
+            if (reply.indexOf("<" + "?xml version=\"1.0\" encoding=\"UTF-8\"?" + ">") === 0) {
+                // we received XML...
+                // since this only happens for errors,
+                // don't perform a full decoding
+                parsed.request = reply.match(/<request>(.*)<\/request>/)[1];
+                parsed.error   = reply.match(/<error>(.*)<\/error>/)[1];
+            } else {
+                // assume query format
+                var elements = reply.split("&");
+                for (var i = 0; i < elements.length; i++) {
+                    var element = elements[i].split("=", 2);
+                    if (element.length > 1) {
+                        parsed[element[0]] = decodeURIComponent(element[1]);
+                    } else {
+                        parsed[element[0]] = null;
+                    }
                 }
             }
         }
@@ -918,10 +1457,14 @@ var Codebird = function () {
         setConsumerKey: setConsumerKey,
         getVersion: getVersion,
         setToken: setToken,
+        setBearerToken: setBearerToken,
+        setUseProxy: setUseProxy,
+        setProxy: setProxy,
+        getApiMethods: getApiMethods,
         __call: __call,
-        statuses_publicTimeline: statuses_publicTimeline,
         oauth_authenticate: oauth_authenticate,
-        oauth_authorize: oauth_authorize
+        oauth_authorize: oauth_authorize,
+        oauth2_token: oauth2_token
     };
 };
 
